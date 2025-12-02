@@ -71,12 +71,14 @@
         const TEXT_API = 'https://bolls.life/get-text/NIV/';
         const STORAGE_KEY_BOOKS = 'bible_books';
         const STORAGE_KEY_CHAPTERS = 'bible_chapters';
+        const STORAGE_KEY_LAST_POSITION = 'bible_last_position';
 
         let books = JSON.parse(localStorage.getItem(STORAGE_KEY_BOOKS)) || [];
 
         async function loadBooks() {
             if (books.length > 0) {
                 populateBookSelect();
+                restoreLastPosition();
                 return;
             }
             try {
@@ -84,6 +86,7 @@
                 books = await response.json();
                 localStorage.setItem(STORAGE_KEY_BOOKS, JSON.stringify(books));
                 populateBookSelect();
+                restoreLastPosition();
             } catch (error) {
                 console.error('Error loading books:', error);
                 document.getElementById('bookSelect').innerHTML = '<option value="">Error loading books</option>';
@@ -99,6 +102,26 @@
                 option.textContent = book.name;
                 bookSelect.appendChild(option);
             });
+        }
+
+        function restoreLastPosition() {
+            const lastPos = JSON.parse(localStorage.getItem(STORAGE_KEY_LAST_POSITION) || '{}');
+            const bookSelect = document.getElementById('bookSelect');
+            const chapterSelect = document.getElementById('chapterSelect');
+
+            if (lastPos.bookId && bookSelect.options[lastPos.bookId]) {
+                bookSelect.value = lastPos.bookId;
+                loadChapters(lastPos.bookId);
+                if (lastPos.chapter && chapterSelect.options[lastPos.chapter]) {
+                    chapterSelect.value = lastPos.chapter;
+                    loadChapter(lastPos.bookId, lastPos.chapter);
+                }
+            }
+        }
+
+        function saveLastPosition(bookId, chapter) {
+            const pos = { bookId: bookId || '', chapter: chapter || '' };
+            localStorage.setItem(STORAGE_KEY_LAST_POSITION, JSON.stringify(pos));
         }
 
         function loadChapters(bookId) {
@@ -118,6 +141,8 @@
         }
 
         async function loadChapter(bookId, chapter) {
+            saveLastPosition(bookId, chapter); // Save position when chapter loads
+
             const key = `${bookId}_${chapter}`;
             let verses = getFromStorage(STORAGE_KEY_CHAPTERS, key);
 
@@ -160,6 +185,7 @@
         // Event listeners
         document.getElementById('bookSelect').addEventListener('change', function() {
             const bookId = this.value;
+            saveLastPosition(bookId, ''); // Save book change
             const chapterSelect = document.getElementById('chapterSelect');
             if (bookId) {
                 loadChapters(bookId);
@@ -169,6 +195,7 @@
                 chapterSelect.disabled = true;
                 chapterSelect.innerHTML = '<option value="">Select Chapter</option>';
                 document.getElementById('verses').innerHTML = 'Select a book and chapter to begin reading.';
+                saveLastPosition('', ''); // Clear position
             }
         });
 
