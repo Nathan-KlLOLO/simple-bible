@@ -6,16 +6,27 @@
     <title>Simple Bible</title>
     <link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTE5IDNINFYxOUgxOUgyMVYxOEMyMSAxNi4xIDE5LjkgMTUgMTkuNSAxNUgxNlYxOUgxNEgyMVYxNUMyMSAxOC4zIDIwLjcgMTkgMjAgMTlIMTlaTTE5IDNINFYxOUgxOUgyMVYxOEMyMSAxNi4xIDE5LjkgMTUgMTkuNSAxNUgxNlYxOUgxNEgyMVYxNUMyMSAxOC4zIDIwLjcgMTkgMjAgMTlIMTlaIiBmaWxsPSJjdXJyZW50Q29sb3IiLz4KPC9zdmc+Cg==">
     <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
         body {
             font-family: Arial, sans-serif;
-            margin: 20px;
             line-height: 1.6;
             background-color: #000;
             color: #fff;
+            display: flex;
+            flex-direction: column;
         }
         #header {
-            margin-bottom: 20px;
-            padding: 10px;
+            flex-shrink: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 0 0 20px 0;
+            margin: 20px 20px 0 20px;
             border-bottom: 1px solid #333;
         }
         select {
@@ -27,11 +38,13 @@
             border: 1px solid #555;
         }
         #verses {
-            height: 80vh;
+            flex: 1;
             overflow-y: auto;
             border: 1px solid #333;
             padding: 15px;
             background-color: #111;
+            margin: 20px;
+            /* border-radius: 10px; */
         }
         .verse {
             margin-bottom: 10px;
@@ -46,9 +59,25 @@
         h1 {
             color: #fff;
             text-align: center;
+            /* margin: 0 0 10px 0; */
         }
         h1::before {
             content: "📖 ";
+        }
+        .chapter-header {
+            font-size: 1.2em;
+            font-weight: bold;
+            text-align: center;
+            margin: 20px 0;
+            color: #fff;
+        }
+        .chapter-break {
+            border: none;
+            border-top: 2px solid #333;
+            margin: 10px 0;
+        }
+        .chapter-container {
+            margin-bottom: 20px;
         }
     </style>
 </head>
@@ -74,11 +103,68 @@
         const STORAGE_KEY_LAST_POSITION = 'bible_last_position';
 
         let books = JSON.parse(localStorage.getItem(STORAGE_KEY_BOOKS)) || [];
+        let currentBookId = '';
+        let currentChapter = 0;
+        let maxChapters = 0;
+        let minLoaded = 0;
+        let maxLoaded = 0;
+        let loadedChapters = new Set();
+        let lastScrollTop = 0;
+
+        // URL param handling
+        function getUrlParams() {
+            const params = new URLSearchParams(window.location.search);
+            return {
+                book: params.get('book') || '',
+                chapter: params.get('chapter') || ''
+            };
+        }
+
+        function updateUrl(bookId = '', chapter = '') {
+            const params = new URLSearchParams();
+            if (bookId) params.set('book', bookId);
+            if (chapter) params.set('chapter', chapter);
+            const newUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+            history.pushState({ bookId, chapter }, '', newUrl);
+        }
+
+        function loadFromUrl() {
+            const { book, chapter } = getUrlParams();
+            if (book && chapter && books.length > 0) {
+                const bookSelect = document.getElementById('bookSelect');
+                const chapterSelect = document.getElementById('chapterSelect');
+                if (bookSelect.options[parseInt(book)]) {
+                    bookSelect.value = book;
+                    loadChapters(book);
+                    chapterSelect.value = chapter;
+                    loadChapter(book, chapter, 'reset');
+                    saveLastPosition(book, chapter);
+                }
+            }
+        }
+
+        window.addEventListener('popstate', (e) => {
+            if (e.state && e.state.bookId && e.state.chapter) {
+                const bookSelect = document.getElementById('bookSelect');
+                const chapterSelect = document.getElementById('chapterSelect');
+                bookSelect.value = e.state.bookId;
+                loadChapters(e.state.bookId);
+                chapterSelect.value = e.state.chapter;
+                loadChapter(e.state.bookId, e.state.chapter, 'reset');
+            } else {
+                restoreLastPosition();
+            }
+        });
 
         async function loadBooks() {
             if (books.length > 0) {
                 populateBookSelect();
-                restoreLastPosition();
+                const { book, chapter } = getUrlParams();
+                if (book && chapter) {
+                    loadFromUrl();
+                } else {
+                    restoreLastPosition();
+                }
                 return;
             }
             try {
@@ -86,7 +172,12 @@
                 books = await response.json();
                 localStorage.setItem(STORAGE_KEY_BOOKS, JSON.stringify(books));
                 populateBookSelect();
-                restoreLastPosition();
+                const { book, chapter } = getUrlParams();
+                if (book && chapter) {
+                    loadFromUrl();
+                } else {
+                    restoreLastPosition();
+                }
             } catch (error) {
                 console.error('Error loading books:', error);
                 document.getElementById('bookSelect').innerHTML = '<option value="">Error loading books</option>';
@@ -109,18 +200,21 @@
             const bookSelect = document.getElementById('bookSelect');
             const chapterSelect = document.getElementById('chapterSelect');
 
-            if (lastPos.bookId && bookSelect.options[lastPos.bookId]) {
+            if (lastPos.bookId) {
                 bookSelect.value = lastPos.bookId;
                 loadChapters(lastPos.bookId);
-                if (lastPos.chapter && chapterSelect.options[lastPos.chapter]) {
+                if (lastPos.chapter) {
                     chapterSelect.value = lastPos.chapter;
-                    loadChapter(lastPos.bookId, lastPos.chapter);
+                    loadChapter(lastPos.bookId, lastPos.chapter, 'reset');
                 }
             }
         }
 
         function saveLastPosition(bookId, chapter) {
-            const pos = { bookId: bookId || '', chapter: chapter || '' };
+            const pos = { 
+                bookId: bookId ? bookId.toString() : '', 
+                chapter: chapter ? chapter.toString() : '' 
+            };
             localStorage.setItem(STORAGE_KEY_LAST_POSITION, JSON.stringify(pos));
         }
 
@@ -138,35 +232,79 @@
                 option.textContent = i;
                 chapterSelect.appendChild(option);
             }
+
+            currentBookId = parseInt(bookId);
+            maxChapters = selectedBook.chapters;
+            loadedChapters.clear();
+            minLoaded = 0;
+            maxLoaded = 0;
         }
 
-        async function loadChapter(bookId, chapter) {
-            saveLastPosition(bookId, chapter); // Save position when chapter loads
+        async function loadChapter(bookId, chapter, mode = 'reset') {
+            const bookNum = parseInt(bookId);
+            const chNum = parseInt(chapter);
 
-            const key = `${bookId}_${chapter}`;
+            if (mode === 'reset') {
+                loadedChapters.clear();
+                minLoaded = 0;
+                maxLoaded = 0;
+            }
+
+            const key = `${bookNum}_${chNum}`;
             let verses = getFromStorage(STORAGE_KEY_CHAPTERS, key);
 
             if (!verses) {
                 try {
-                    const response = await fetch(`${TEXT_API}${bookId}/${chapter}/`);
+                    const response = await fetch(`${TEXT_API}${bookNum}/${chNum}/`);
                     verses = await response.json();
                     saveToStorage(STORAGE_KEY_CHAPTERS, key, verses);
                 } catch (error) {
                     console.error('Error loading chapter:', error);
-                    document.getElementById('verses').innerHTML = '<p>Error loading verses. Try again later.</p>';
+                    if (mode === 'reset') {
+                        document.getElementById('verses').innerHTML = '<p>Error loading verses. Try again later.</p>';
+                    }
                     return;
                 }
             }
 
-            const versesDiv = document.getElementById('verses');
-            let html = '';
+            if (!loadedChapters.has(chNum)) {
+                loadedChapters.add(chNum);
+                if (chNum < minLoaded || minLoaded === 0) minLoaded = chNum;
+                if (chNum > maxLoaded || maxLoaded === 0) maxLoaded = chNum;
+            }
+
+            const selectedBook = books.find(b => b.bookid === bookNum);
+            const bookName = selectedBook ? selectedBook.name : 'Unknown';
+
+            let verseHtml = '';
             verses.forEach(verse => {
-                html += `<div class="verse">
-                    <span class="verse-num">${verse.verse}</span>
-                    <span class="verse-text">${verse.text}</span>
+                verseHtml += `<div class="verse">
+                    <span class="verse-num">${verse.verse}</span> ${verse.text}
                 </div>`;
             });
-            versesDiv.innerHTML = html || '<p>No verses found.</p>';
+
+            const chapterBlock = `
+                <div class="chapter-container" data-chapter="${chNum}">
+                    <div class="chapter-header">${bookName} ${chNum}</div>
+                    ${verseHtml}
+                </div>
+            `;
+
+            const div = document.getElementById('verses');
+            const separator = '<hr class="chapter-break">';
+
+            if (mode === 'reset') {
+                div.innerHTML = chapterBlock;
+                currentChapter = chNum;
+            } else if (mode === 'append') {
+                div.insertAdjacentHTML('beforeend', separator + chapterBlock);
+            } else if (mode === 'prepend') {
+                const oldScrollTop = div.scrollTop;
+                const oldScrollHeight = div.scrollHeight;
+                div.insertAdjacentHTML('afterbegin', chapterBlock + separator);
+                const delta = div.scrollHeight - oldScrollHeight;
+                div.scrollTop = oldScrollTop + delta;
+            }
         }
 
         function getFromStorage(key, subkey) {
@@ -185,7 +323,9 @@
         // Event listeners
         document.getElementById('bookSelect').addEventListener('change', function() {
             const bookId = this.value;
-            saveLastPosition(bookId, ''); // Save book change
+            const chapter = document.getElementById('chapterSelect').value;
+            updateUrl(bookId, '');
+            saveLastPosition(bookId, '');
             const chapterSelect = document.getElementById('chapterSelect');
             if (bookId) {
                 loadChapters(bookId);
@@ -195,7 +335,11 @@
                 chapterSelect.disabled = true;
                 chapterSelect.innerHTML = '<option value="">Select Chapter</option>';
                 document.getElementById('verses').innerHTML = 'Select a book and chapter to begin reading.';
-                saveLastPosition('', ''); // Clear position
+                saveLastPosition('', '');
+                currentBookId = '';
+                loadedChapters.clear();
+                minLoaded = 0;
+                maxLoaded = 0;
             }
         });
 
@@ -203,8 +347,89 @@
             const chapter = this.value;
             const bookId = document.getElementById('bookSelect').value;
             if (bookId && chapter) {
-                loadChapter(bookId, chapter);
+                updateUrl(bookId, chapter);
+                saveLastPosition(bookId, chapter);
+                loadChapter(bookId, chapter, 'reset');
             }
+        });
+
+        // Infinite scroll setup
+        const versesDiv = document.getElementById('verses');
+        let scrollTimeout;
+        versesDiv.addEventListener('scroll', () => {
+            if (!currentBookId || maxChapters === 0) return;
+            clearTimeout(scrollTimeout);
+            scrollTimeout = setTimeout(async () => {
+                const currentScrollTop = versesDiv.scrollTop;
+                const delta = currentScrollTop - lastScrollTop;
+                lastScrollTop = currentScrollTop;
+
+                // Infinite load logic
+                const { scrollTop, scrollHeight, clientHeight } = versesDiv;
+                const threshold = 200;
+
+                if (scrollTop + clientHeight >= scrollHeight - threshold) {
+                    const nextCh = maxLoaded + 1;
+                    if (nextCh <= maxChapters && !loadedChapters.has(nextCh)) {
+                        await loadChapter(currentBookId.toString(), nextCh, 'append');
+                    }
+                }
+
+                if (scrollTop <= threshold) {
+                    const prevCh = minLoaded - 1;
+                    if (prevCh >= 1 && !loadedChapters.has(prevCh)) {
+                        await loadChapter(currentBookId.toString(), prevCh, 'prepend');
+                    }
+                }
+
+                // Chapter visibility check for URL update
+                const containers = Array.from(versesDiv.querySelectorAll('.chapter-container'));
+                if (containers.length < 2) return;
+
+                const viewRect = versesDiv.getBoundingClientRect();
+                let currentVisibleHeight = 0;
+                let nextVisibleChapter = null;
+                let nextVisibleHeight = 0;
+                let prevVisibleChapter = null;
+                let prevVisibleHeight = 0;
+
+                containers.forEach(cont => {
+                    const rect = cont.getBoundingClientRect();
+                    const totalHeight = cont.offsetHeight;
+                    if (totalHeight === 0) return;
+
+                    const relTop = Math.max(rect.top - viewRect.top, 0);
+                    const relBottom = Math.min(rect.bottom - viewRect.top, versesDiv.clientHeight);
+                    const visibleHeight = Math.max(0, relBottom - relTop);
+
+                    const ch = parseInt(cont.dataset.chapter);
+                    if (ch === currentChapter) {
+                        currentVisibleHeight = visibleHeight;
+                    } else if (ch > currentChapter && visibleHeight > nextVisibleHeight) {
+                        nextVisibleHeight = visibleHeight;
+                        nextVisibleChapter = ch;
+                    } else if (ch < currentChapter && visibleHeight > prevVisibleHeight) {
+                        prevVisibleHeight = visibleHeight;
+                        prevVisibleChapter = ch;
+                    }
+                });
+
+                if (delta > 0 && nextVisibleChapter && nextVisibleHeight > currentVisibleHeight) {
+                    const bookIdStr = currentBookId.toString();
+                    updateUrl(bookIdStr, nextVisibleChapter);
+                    document.getElementById('bookSelect').value = bookIdStr;
+                    document.getElementById('chapterSelect').value = nextVisibleChapter;
+                    currentChapter = nextVisibleChapter;
+                    saveLastPosition(bookIdStr, nextVisibleChapter);
+                } else if (delta < 0 && prevVisibleChapter && prevVisibleHeight > currentVisibleHeight) {
+                    const bookIdStr = currentBookId.toString();
+                    updateUrl(bookIdStr, prevVisibleChapter);
+                    document.getElementById('bookSelect').value = bookIdStr;
+                    document.getElementById('chapterSelect').value = prevVisibleChapter;
+                    currentChapter = prevVisibleChapter;
+                    saveLastPosition(bookIdStr, prevVisibleChapter);
+                }
+            }, 150);
         });
 
         // Initialize
